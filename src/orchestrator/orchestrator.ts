@@ -74,6 +74,123 @@ const DEFAULT_MAX_CONCURRENCY = 5
 const DEFAULT_MODEL = 'claude-opus-4-6'
 
 // ---------------------------------------------------------------------------
+// Short-circuit helpers (exported for testability)
+// ---------------------------------------------------------------------------
+
+/**
+ * Regex patterns that indicate a goal requires multi-agent coordination.
+ *
+ * Each pattern targets a distinct complexity signal:
+ * - Sequencing:     "first … then", "step 1 / step 2", numbered lists
+ * - Coordination:   "collaborate", "coordinate", "review each other"
+ * - Parallel work:  "in parallel", "at the same time", "concurrently"
+ * - Multi-phase:    "phase", "stage", multiple distinct action verbs joined by connectives
+ */
+const COMPLEXITY_PATTERNS: RegExp[] = [
+  // Explicit sequencing
+  /\bfirst\b.{3,60}\bthen\b/i,
+  /\bstep\s*\d/i,
+  /\bphase\s*\d/i,
+  /\bstage\s*\d/i,
+  /^\s*\d+[\.\)]/m,                       // numbered list items ("1. …", "2) …")
+
+  // Coordination language
+  /\bcollaborat/i,
+  /\bcoordinat/i,
+  /\breview\s+each\s+other/i,
+  /\bwork\s+together\b/i,
+
+  // Parallel execution
+  /\bin\s+parallel\b/i,
+  /\bconcurrently\b/i,
+  /\bat\s+the\s+same\s+time\b/i,
+
+  // Multiple deliverables joined by connectives
+  // Matches patterns like "build X, then deploy Y and test Z"
+  /\b(?:build|create|implement|design|write|develop)\b.{5,80}\b(?:and|then)\b.{5,80}\b(?:build|create|implement|design|write|develop|test|review|deploy)\b/i,
+]
+
+/**
+ * Maximum goal length (in characters) below which a goal *may* be simple.
+ *
+ * Goals longer than this threshold almost always contain enough detail to
+ * warrant multi-agent decomposition. The value is generous — short-circuit
+ * is meant for genuinely simple, single-action goals.
+ */
+const SIMPLE_GOAL_MAX_LENGTH = 200
+
+/**
+ * Determine whether a goal is simple enough to skip coordinator decomposition.
+ *
+ * A goal is considered "simple" when ALL of the following hold:
+ *   1. Its length is ≤ {@link SIMPLE_GOAL_MAX_LENGTH}.
+ *   2. It does not match any {@link COMPLEXITY_PATTERNS}.
+ *
+ * Exported for unit testing.
+ */
+export function isSimpleGoal(goal: string): boolean {
+  if (goal.length > SIMPLE_GOAL_MAX_LENGTH) return false
+  return !COMPLEXITY_PATTERNS.some((re) => re.test(goal))
+}
+
+/**
+ * Select the best-matching agent for a goal using keyword affinity scoring.
+ *
+ * Scores each agent by keyword overlap between the goal text and the agent's
+ * `name` + `systemPrompt`. Returns the highest-scoring agent, or falls back
+ * to the first agent when all scores are equal.
+ *
+ * The keyword extraction and scoring logic mirrors the `capability-match`
+ * strategy in {@link Scheduler} to keep behaviour consistent.
+ *
+ * Exported for unit testing.
+ */
+export function selectBestAgent(goal: string, agents: AgentConfig[]): AgentConfig {
+  if (agents.length <= 1) return agents[0]!
+
+  const goalKeywords = extractKeywords(goal)
+
+  let bestAgent = agents[0]!
+  let bestScore = -1
+
+  for (const agent of agents) {
+    const agentText = `${agent.name} ${agent.systemPrompt ?? ''}`
+    const agentKeywords = extractKeywords(agentText)
+
+    // Score in both directions (same as Scheduler.capability-match)
+    const scoreA = keywordScore(agentText, goalKeywords)
+    const scoreB = keywordScore(goal, agentKeywords)
+    const score = scoreA + scoreB
+
+    if (score > bestScore) {
+      bestScore = score
+      bestAgent = agent
+    }
+  }
+
+  return bestAgent
+}
+
+// ---- keyword helpers (shared with Scheduler via same logic) ----
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'that', 'this', 'with', 'are', 'from', 'have',
+  'will', 'your', 'you', 'can', 'all', 'each', 'when', 'then', 'they',
+  'them', 'their', 'about', 'into', 'more', 'also', 'should', 'must',
+])
+
+function extractKeywords(text: string): string[] {
+  return [...new Set(
+    text.toLowerCase().split(/\W+/).filter((w) => w.length > 3 && !STOP_WORDS.has(w)),
+  )]
+}
+
+function keywordScore(text: string, keywords: string[]): number {
+  const lower = text.toLowerCase()
+  return keywords.reduce((acc, kw) => acc + (lower.includes(kw.toLowerCase()) ? 1 : 0), 0)
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -698,6 +815,38 @@ export class OpenMultiAgent {
    */
   async runTeam(team: Team, goal: string, options?: { abortSignal?: AbortSignal }): Promise<TeamRunResult> {
     const agentConfigs = team.getAgents()
+
+    // ------------------------------------------------------------------
+    // Short-circuit: skip coordinator for simple, single-action goals.
+    //
+    // When the goal is short and contains no multi-step / coordination
+    // signals, dispatching it to a single agent is faster and cheaper
+    // than spinning up a coordinator for decomposition + synthesis.
+    //
+    // The best-matching agent is selected via keyword affinity scoring
+    // (same algorithm as the `capability-match` scheduler strategy).
+    // ------------------------------------------------------------------
+    if (agentConfigs.length > 0 && isSimpleGoal(goal)) {
+      const bestAgent = selectBestAgent(goal, agentConfigs)
+
+      this.config.onProgress?.({
+        type: 'agent_start',
+        agent: bestAgent.name,
+        data: { phase: 'short-circuit', goal },
+      })
+
+      const result = await this.runAgent(bestAgent, goal)
+      const agentResults = new Map<string, AgentRunResult>()
+      agentResults.set(bestAgent.name, result)
+
+      this.config.onProgress?.({
+        type: 'agent_complete',
+        agent: bestAgent.name,
+        data: { phase: 'short-circuit', result },
+      })
+
+      return this.buildTeamRunResult(agentResults)
+    }
 
     // ------------------------------------------------------------------
     // Step 1: Coordinator decomposes goal into tasks

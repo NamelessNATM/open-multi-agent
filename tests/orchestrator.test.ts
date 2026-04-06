@@ -215,7 +215,7 @@ describe('OpenMultiAgent', () => {
       })
       const team = oma.createTeam('t', teamCfg())
 
-      const result = await oma.runTeam(team, 'Research AI safety')
+      const result = await oma.runTeam(team, 'First research AI safety best practices, then write a comprehensive implementation guide')
 
       expect(result.success).toBe(true)
       // Should have coordinator result
@@ -233,7 +233,7 @@ describe('OpenMultiAgent', () => {
       const oma = new OpenMultiAgent({ defaultModel: 'mock-model' })
       const team = oma.createTeam('t', teamCfg())
 
-      const result = await oma.runTeam(team, 'Do something')
+      const result = await oma.runTeam(team, 'First design the database schema, then implement the REST API endpoints')
 
       expect(result.success).toBe(true)
     })
