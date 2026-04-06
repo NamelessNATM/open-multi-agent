@@ -11,7 +11,7 @@ describe('AbortSignal support for runTeam and runTasks', () => {
 
     // Verify the API accepts the option without throwing
     const controller = new AbortController()
-    const team = new Team('test', {
+    const team = new Team({
       name: 'test',
       agents: [
         { name: 'agent1', model: 'test-model', systemPrompt: 'test' },
@@ -39,7 +39,7 @@ describe('AbortSignal support for runTeam and runTasks', () => {
     })
 
     const controller = new AbortController()
-    const team = new Team('test', {
+    const team = new Team({
       name: 'test',
       agents: [
         { name: 'agent1', model: 'test-model', systemPrompt: 'test' },
@@ -65,7 +65,7 @@ describe('AbortSignal support for runTeam and runTasks', () => {
     const controller = new AbortController()
     controller.abort()
 
-    const team = new Team('test', {
+    const team = new Team({
       name: 'test',
       agents: [
         { name: 'agent1', model: 'test-model', systemPrompt: 'test' },
@@ -87,7 +87,7 @@ describe('AbortSignal support for runTeam and runTasks', () => {
       defaultProvider: 'openai',
     })
 
-    const team = new Team('test', {
+    const team = new Team({
       name: 'test',
       agents: [
         { name: 'agent1', model: 'test-model', systemPrompt: 'test' },
