@@ -94,12 +94,15 @@ export type { ToolExecutorOptions, BatchToolCall } from './tool/executor.js'
 export {
   registerBuiltInTools,
   BUILT_IN_TOOLS,
+  ALL_BUILT_IN_TOOLS_WITH_DELEGATE,
   bashTool,
+  delegateToAgentTool,
   fileReadTool,
   fileWriteTool,
   fileEditTool,
   grepTool,
 } from './tool/built-in/index.js'
+export type { RegisterBuiltInToolsOptions } from './tool/built-in/index.js'
 
 // ---------------------------------------------------------------------------
 // LLM adapters
@@ -144,6 +147,7 @@ export type {
   ToolUseContext,
   AgentInfo,
   TeamInfo,
+  DelegationPoolView,
 
   // Agent
   AgentConfig,
